@@ -1,7 +1,5 @@
-﻿using Azure.Identity;
-using Microsoft.Graph;
+﻿using Microsoft.Graph;
 using Microsoft.Graph.Models;
-using Microsoft.Graph.Models.Security;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,16 +16,31 @@ namespace OrganizationStructure.Generator
             {
                 throw new ArgumentNullException(nameof(args));
             }
-            if (args.Length != 4)
+            if (args.Length != 2 || args.Length != 4)
             {
                 throw new ArgumentOutOfRangeException(nameof(args));
             }
-            var tenantId = args[0];
-            var clientId = args[1];
-            var clientSecret = args[2];
-            var outputFolder = args[3];
 
-            var users = await GetUsersAsync(tenantId, clientId, clientSecret);
+            string outputFolder;
+
+            GraphServiceClient client;
+            // create client from existing access token
+            if (args.Length == 2)
+            {
+                var accessToken = args[0];
+                outputFolder = args[1];
+                client = GraphServiceClientFactory.CreateClientFromToken(accessToken);
+            }
+            else
+            {
+                var tenantId = args[0];
+                var clientId = args[1];
+                var clientSecret = args[2];
+                outputFolder = args[3];
+                client = GraphServiceClientFactory.CreateClientFromClientSecretCredential(tenantId, clientId, clientSecret);
+            }
+
+            var users = await GetUsersAsync(client);
             await GroupByManagerAsync(users, outputFolder);
             await GroupByDepartmentAsync(users, outputFolder);
             await GroupByJobTitleAsync(users, outputFolder);
@@ -111,7 +124,8 @@ namespace OrganizationStructure.Generator
 
         private static async Task GroupByOfficeLocationAsync(List<User> users, string outputFolder)
         {
-            var locations = users.GroupBy(x => x.OfficeLocation);
+            var countries = users.GroupBy(x => x.Country);
+            
 
             using var file = new StreamWriter(Path.Combine(outputFolder, "OfficeLocations.md"));
             await file.WriteLineAsync("---");
@@ -119,26 +133,34 @@ namespace OrganizationStructure.Generator
             await file.WriteLineAsync("  colorFreezeLevel: 6");
             await file.WriteLineAsync("---");
             await file.WriteLineAsync("# Office locations");
-            foreach (var location in locations)
+
+            foreach (var country in countries)
             {
-                await file.WriteLineAsync($"## {location.Key}");
-                foreach (var user in location)
+                await file.WriteLineAsync($"### {country.Key}");
+                var cities = country.GroupBy(x => x.City);
+                foreach (var city in cities)
                 {
-                    await file.WriteLineAsync($"- {user.DisplayName}");
-                    await file.WriteLineAsync($"  {user.Department} ({user.JobTitle})");
+                    await file.WriteLineAsync($"#### {city.Key}");
+                    var locations = city.GroupBy(x => x.OfficeLocation);
+                    foreach (var location in locations)
+                    {
+                        await file.WriteLineAsync($"##### {location.Key}");
+                        foreach (var user in location)
+                        {
+                            await file.WriteLineAsync($"- {user.DisplayName}");
+                            await file.WriteLineAsync($"  {user.Department} ({user.JobTitle})");
+                        }
+                    }
                 }
             }
         }
 
-        private static async Task<List<User>> GetUsersAsync(string tenantId, string clientId, string clientSecret)
+        private static async Task<List<User>> GetUsersAsync(GraphServiceClient graphClient)
         {
-            var clientSecretCredentials = new ClientSecretCredential(tenantId, clientId, clientSecret);
-            var graphClient = new GraphServiceClient(clientSecretCredentials);
-
             // use filter if you need to exclude guest users, etc.
             var response = await graphClient.Users.GetAsync(x =>
             {
-                x.QueryParameters.Select = new[] { "id", "displayName", "givenName", "mail", "jobTitle", "officeLocation", "city", "department" };
+                x.QueryParameters.Select = new[] { "id", "displayName", "givenName", "mail", "jobTitle", "officeLocation", "city", "country", "department" };
                 x.QueryParameters.Expand = new[] { "manager($select=id)" };
             });
 
@@ -148,8 +170,21 @@ namespace OrganizationStructure.Generator
                 users.Add(user);
                 return true;
             });
-
             await pageIterator.IterateAsync();
+
+            // filtering users
+            //users = users.Where(x => x.Mail != null && x.Mail.EndsWith("contoso.com")).ToList();
+            //users = users.Where(x => x.GivenName != null).ToList();
+
+            //foreach (var name in new[] { "Tool" })
+            //{
+            //    users = users.Where(x => x.GivenName != name).ToList();
+            //}
+            //foreach (var email in new[] { "johndoec@contoso.com" })
+            //{
+            //    users = users.Where(x => x.Mail != email).ToList();
+            //}
+
             return users;
         }
     }
