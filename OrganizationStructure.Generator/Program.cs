@@ -16,7 +16,7 @@ namespace OrganizationStructure.Generator
             {
                 throw new ArgumentNullException(nameof(args));
             }
-            if (args.Length != 2 || args.Length != 4)
+            if (args.Length != 2 && args.Length != 4)
             {
                 throw new ArgumentOutOfRangeException(nameof(args));
             }
